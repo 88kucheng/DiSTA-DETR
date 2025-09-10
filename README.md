@@ -1,4 +1,4 @@
-# DiSTA-DETR: RT-DETR with Dilated-Sparse Thermal Attention for UAV Infrared Small-Object Detection
+# Enhanced Infrared Small-Object Detection in UAV Imagery: DiSTA-DETR with Dilated-Sparse Thermal Attention
 
 
 
