@@ -216,9 +216,9 @@ class GateFeedForward(nn.Module):
         self.project_out = nn.Conv2d(hidden_dim, dim, kernel_size=3, padding=1, dilation=1, bias=bias)
 
     def forward(self, x):
-        f = self.act(self.project_in(x))     # 特征主干
-        g = torch.sigmoid(self.gate(x))      # 生成 soft gate mask
-        x = f * g                             # 乘上门控权重
+        f = self.act(self.project_in(x))
+        g = torch.sigmoid(self.gate(x))
+        x = f * g
         return self.project_out(x)
 
 

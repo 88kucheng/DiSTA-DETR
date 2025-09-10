@@ -22,7 +22,7 @@ from .edta import EDTA, LayerNorm
 
 __all__ = ['SPDConv','HPST', 'EGCA']
 
-######################################## Global-to-Local Spatial Aggregation Module start ########################################
+######################################## EGCA start ########################################
 
 class ContextBlock(nn.Module):
 
@@ -91,25 +91,25 @@ class ContextBlock(nn.Module):
             pass
 
     def spatial_pool(self, x):
-        batch, channel, height, width = x.size()   #拆包：把输入特征图 x 的形状拆开  假设 x 是 [2, 64, 80, 80]，表示： 2张图（batch=2） 每张图64个通道 每张图大小是80×80像素
+        batch, channel, height, width = x.size()
         if self.pooling_type == 'att':
             input_x = x
             # [N, C, H * W]
-            input_x = input_x.view(batch, channel, height * width)  #展平  把 80×80 的图拉成 6400 个像素点。 现在 input_x 是 [2, 64, 6400]，表示：每张图的每个通道上有6400个像素值
+            input_x = input_x.view(batch, channel, height * width)
             # [N, 1, C, H * W]
-            input_x = input_x.unsqueeze(1) #加维度：变成 [2, 1, 64, 6400]，为了方便后续矩阵乘法。
+            input_x = input_x.unsqueeze(1)
             # [N, 1, H, W]
-            context_mask = self.conv_mask(x)  #输入 x 是 [2, 64, 80, 80]，经过 1×1卷积 后变成 [2, 1, 80, 80]。 这1个通道的图就是“注意力热图”，越亮的地方越重要。
+            context_mask = self.conv_mask(x)
             # [N, 1, H * W]
-            context_mask = context_mask.view(batch, 1, height * width)  #同样拉平成 [2, 1, 6400]。
+            context_mask = context_mask.view(batch, 1, height * width)
             # [N, 1, H * W]
-            context_mask = self.softmax(context_mask) #Softmax：把6400个像素值变成“概率”，所有值加起来=1。 相当于“每个像素对全局的贡献权重”。
+            context_mask = self.softmax(context_mask)
             # [N, 1, H * W, 1]
             context_mask = context_mask.unsqueeze(-1)
             # [N, 1, C, 1]
-            context = torch.matmul(input_x, context_mask) #矩阵乘法：把“像素值”和“注意力权重”相乘。  结果 context 是 [2, 1, 64, 1]，表示：用注意力加权后的全局特征。
+            context = torch.matmul(input_x, context_mask)
             # [N, C, 1, 1]
-            context = context.view(batch, channel, 1, 1) #** reshape**：变成 [2, 64, 1, 1]，就是“一张图的64个通道，每个通道被压缩成一个数”。
+            context = context.view(batch, channel, 1, 1)
         else:
             # [N, C, 1, 1]
             context = self.avg_pool(x)
@@ -118,8 +118,8 @@ class ContextBlock(nn.Module):
 
     def forward(self, x):
         # [N, C, 1, 1]
-        context = self.spatial_pool(x)    #spatial_pool()： 使用 1×1 Conv + Softmax 生成空间注意力图。
-        # channel_mul_conv：通过通道乘法增强目标区域  channel_add_conv：可选的通道加法增强。
+        context = self.spatial_pool(x)
+
         out = x
         if self.channel_mul_conv is not None:
             # [N, C, 1, 1]
@@ -168,61 +168,26 @@ class GLSASpatialAttention(nn.Module):
         x = self.conv1(x)
         return self.sigmoid(x)
 
-class GLSAConvBranch(nn.Module):
-    def __init__(self, in_features, hidden_features = None, out_features = None):
-        super().__init__()
-        hidden_features = hidden_features or in_features
-        out_features = out_features or in_features
-        self.conv1 = Conv(in_features, hidden_features, 1, act=nn.ReLU(inplace=True))
-        self.conv2 = Conv(hidden_features, hidden_features, 3, g=hidden_features, act=nn.ReLU(inplace=True))#g=hidden_features → groups 数等于通道数，即 depthwise 卷积（每个通道单独卷积）
-        self.conv3 = Conv(hidden_features, hidden_features, 1, act=nn.ReLU(inplace=True))
-        self.conv4 = Conv(hidden_features, hidden_features, 3, g=hidden_features, act=nn.ReLU(inplace=True))
-        self.conv5 = Conv(hidden_features, hidden_features, 1, act=nn.SiLU(inplace=True))
-        self.conv6 = Conv(hidden_features, hidden_features, 3, g=hidden_features, act=nn.ReLU(inplace=True))
-        self.conv7 = nn.Sequential(
-            nn.Conv2d(hidden_features, out_features, 1, bias=False),
-            nn.ReLU(inplace=True)
-        )
-        self.ca = GLSAChannelAttention(64)
-        self.sa = GLSASpatialAttention()
-        self.sigmoid_spatial = nn.Sigmoid()
-
-    def forward(self, x):
-        res1 = x
-        res2 = x
-        x = self.conv1(x)
-        x = x + self.conv2(x)
-        x = self.conv3(x)
-        x = x + self.conv4(x)
-        x = self.conv5(x)
-        x = x + self.conv6(x)
-        x = self.conv7(x)
-        x_mask = self.sigmoid_spatial(x)
-        res1 = res1 * x_mask
-        return res2 + res1
-
 
 class MultiScaleResLocal(nn.Module):
-    """
-    多尺度 3×3 + 5×5 DWConv 堆叠 + 残差 + 掩码加权
-    """
+
     def __init__(self, in_features, hidden_features=None, out_features=None):
         super().__init__()
         hidden = hidden_features or in_features
         out   = out_features   or in_features
 
-        # 1×1 统一通道
+
         self.pw = nn.Conv2d(in_features, hidden, 1, bias=False)
 
-        # ---------- 3×3 残差分支 ----------
+        # ---------- 3×3 ----------
         self.dw3_1 = nn.Conv2d(hidden, hidden, 3, padding=1, groups=hidden, bias=False)
         self.dw3_2 = nn.Conv2d(hidden, hidden, 3, padding=1, groups=hidden, bias=False)
 
-        # ---------- 5×5 残差分支 ----------
+        # ---------- 5×5  ----------
         self.dw5_1 = nn.Conv2d(hidden, hidden, 5, padding=2, groups=hidden, bias=False)
         self.dw5_2 = nn.Conv2d(hidden, hidden, 5, padding=2, groups=hidden, bias=False)
 
-        # 融合 & 掩码生成
+
         self.fuse   = nn.Conv2d(hidden * 2, hidden, 1, bias=False)
         self.mask   = nn.Sequential(
             nn.Conv2d(hidden, 1, 1, bias=False),
@@ -233,68 +198,28 @@ class MultiScaleResLocal(nn.Module):
     def forward(self, x):
         identity = x
 
-        # 统一通道
+
         x = self.pw(x)
 
-        # 3×3 残差流
+
         f3 = x + self.dw3_1(x)
         f3 = f3 + self.dw3_2(f3)
 
-        # 5×5 残差流
+
         f5 = x + self.dw5_1(x)
         f5 = f5 + self.dw5_2(f5)
 
-        # 多尺度融合
+
         fused = torch.cat([f3, f5], dim=1)
         fused = self.fuse(fused)
 
-        # 掩码加权 & 残差输出
+
         mask = self.mask(fused)
-        out  = identity + fused * mask   # 与原 GLSAConvBranch 风格一致
+        out  = identity + fused * mask
         out  = self.out_conv(out)
         return out
 
 
-
-
-class LiteMultiScaleMaskLocal(nn.Module):
-    def __init__(self, in_features, out_features=None):
-        super().__init__()
-        out = out_features or in_features
-
-        # 1×1 统一通道
-        self.pw = nn.Conv2d(in_features, out, 1, bias=False)
-
-        # 单级 3×3 & 5×5 depthwise
-        self.dw3 = nn.Conv2d(out, out, 3, padding=1, groups=out, bias=False)
-        self.dw5 = nn.Conv2d(out, out, 5, padding=2, groups=out, bias=False)
-
-        # 融合 & 掩码
-        self.fuse = nn.Conv2d(out * 2, out, 1, bias=False)
-        self.mask = nn.Sequential(
-            nn.Conv2d(out, 1, 1, bias=False),
-            nn.Sigmoid()
-        )
-        self.out_conv = nn.Conv2d(out, out, 1, bias=False)
-
-    def forward(self, x):
-        identity = x
-        x1 = self.pw(x)                       # [B,out,H,W]
-
-        # 并行单级卷积
-        f3 = self.dw3(x)
-        # f3 = x + f3
-        f5 = self.dw5(x)
-        # f5 = x + f5
-
-        # 融合
-        fused = self.fuse(torch.cat([f3, f5,x], dim=1))
-        mask  = self.mask(fused)
-
-        # 掩码加权 + 残差
-        out = identity + fused * mask
-        out = self.out_conv(out)
-        return out
 
 
 
@@ -308,8 +233,6 @@ class EGCA(nn.Module):
         self.local_11conv = nn.Conv2d(input_dim//2,embed_dim,1)
         self.global_11conv = nn.Conv2d(input_dim//2,embed_dim,1)
         self.GlobelBlock = ContextBlock(inplanes= embed_dim, ratio=2)
-        # self.local = GLSAConvBranch(in_features = embed_dim, hidden_features = embed_dim, out_features = embed_dim)
-        # self.local = LiteMultiScaleMaskLocal(embed_dim, embed_dim)
         self.local = MultiScaleResLocal(embed_dim, embed_dim)
     def forward(self, x):
         b, c, h, w = x.size()
@@ -327,7 +250,7 @@ class EGCA(nn.Module):
 
         return x
 
-######################################## Global-to-Local Spatial Aggregation Module end ########################################
+######################################## EGCA end ########################################
 
 ######################################## SPD-Conv start ########################################
 
@@ -345,31 +268,12 @@ class SPDConv(nn.Module):
 
 ######################################## SPD-Conv end ########################################
 
-######################################## PyramidSparseTransformer start ########################################
+######################################## HPST start ########################################
 
 
 
 class PSAttn(nn.Module):
     """
-    Pyramid Sparse Attention module for efficient multi-scale feature fusion in object detection.
-
-    This module implements a cross-attention mechanism where queries are derived from lower-level features
-    and keys/values from higher-level features. It provides a coarse attention output during training and,
-    optionally, a fine attention output during inference when `topk > 0`, enhancing performance by focusing
-    on key regions across scales.
-
-    Attributes:
-        num_heads (int): Number of attention heads.
-        head_dim (int): Dimension of each attention head.
-        q (Conv): Convolution layer for computing queries from the input feature.
-        kv (Conv): Convolution layer for computing keys and values from the upper feature.
-        proj (Conv): Projection convolution layer for the output.
-        pe (Conv): Positional encoding convolution layer.
-        gate_conv1d (nn.Conv1d): 1D convolution for computing the gating mechanism.
-
-    Methods:
-        forward: Applies pyramid sparse attention to the input tensors.
-
     Examples:
         >>> attn = PSAttn(dim=256, num_heads=8, topk=4, tau=1.0)
         >>> x = torch.randn(1, 256, 32, 32)
@@ -457,8 +361,6 @@ class PSAttn(nn.Module):
 
             # Aggregate similarity scores over query dimension for token selection
             # global_sim = sim.mean(dim=2)  # [B, num_heads, H_up*W_up]
-            #global_sim替换为下面这个
-            # ---- 热感显著性加权 Top-K ----
             with torch.no_grad():
                 heat = F.adaptive_avg_pool2d(x.mean(1, keepdim=True), (H_up, W_up)).flatten(2)  # [B,1,K]
             global_sim = sim.mean(dim=2) * heat.squeeze(1).unsqueeze(1)  # [B,nh,K] * [B,1,K]
@@ -508,21 +410,6 @@ class PSAttn(nn.Module):
 
 class PSAttnBlock(nn.Module):
     """
-    Pyramid Sparse Attention block module for efficient feature fusion.
-
-    This module implements a Pyramid Sparse Attention (PSAttn) mechanism combined with a
-    multi-layer perceptron (MLP) to enhance feature representation while maintaining
-    computational efficiency. It is designed for feature fusion across different scales
-    in computer vision architectures.
-
-    Attributes:
-        attn (PSAttn): Pyramid Sparse Attention module for cross-scale feature fusion.
-        mlp (nn.Sequential): Multi-layer perceptron for feature transformation.
-
-    Methods:
-        _init_weights: Initializes module weights using truncated normal distribution.
-        forward: Applies attention and feed-forward processing to the input tensor.
-
     Examples:
         >>> block = PSAttnBlock(dim=256, num_heads=8, mlp_ratio=2)
         >>> x = torch.randn(1, 256, 32, 32)
@@ -533,15 +420,7 @@ class PSAttnBlock(nn.Module):
     """
 
     def __init__(self, dim, num_heads, mlp_ratio=2, topk = 0):
-        """
-        Initialize the Pyramid Sparse Attention block module.
 
-        Args:
-            dim (int): Number of input channels.
-            num_heads (int): Number of attention heads in the PSAttn module.
-            mlp_ratio (float): Expansion ratio for the MLP hidden dimension.
-            topk (int): Number of selected token in fine attention, set 0 for training stage.
-        """
         super().__init__()
         self.attn = PSAttn(dim, num_heads=num_heads, topk=topk)  # Pyramid Sparse Attention module
         mlp_hidden_dim = int(dim * mlp_ratio)  # Calculate hidden dimension for MLP
@@ -586,18 +465,6 @@ class PSAttnBlock(nn.Module):
 
 class HPST(nn.Module):
     """
-    Pyramid Sparse Transformer (PST) module for enhanced feature fusion with attention mechanisms.
-
-    This module integrates Pyramid Sparse Attention (PSA) blocks to fuse features from different scales,
-    leveraging cross-attention and dynamic token selection for efficient computation. It is designed to
-    enhance feature representations in tasks such as object detection and image classification.
-
-    Attributes:
-        cv1 (Conv): Initial 1x1 convolution layer that reduces input channels to hidden channels.
-        cvup (Conv): Initial 1x1 convolution layer that reduces input channels from upper-level feature to hidden channels.
-        cv2 (Conv): Final 1x1 convolution layer that processes concatenated features.
-        attnlayer_{i} (PSAttnBlock): Stacked Pyramid Sparse Attention blocks for feature fusion.
-
     Examples:
         >>> m = HPST(512, 512, 256, n=1, mlp_ratio=2.0, e=0.5, k=0)
         >>> x = (torch.randn(1, 512, 32, 32), torch.randn(1, 512, 16, 16))
@@ -607,18 +474,6 @@ class HPST(nn.Module):
     """
 
     def __init__(self, c1, c_up, c2, n=1, mlp_ratio=2.0, e=0.5, k=0):
-        """
-        Initialize the Pyramid Sparse Transformer module.
-
-        Args:
-            c1 (int): Number of input channels.
-            c_up (int): Number of input channels from upper-level feature.
-            c2 (int): Number of output channels.
-            n (int): Number of PSAttnBlock modules to stack.
-            mlp_ratio (float): Expansion ratio for MLP hidden dimension in PSAttnBlock.
-            e (float): Channel expansion ratio for hidden channels.
-            k (int): Number of top-k tokens in fine attention, set to 0 in training phase.
-        """
         super().__init__()
         c_ = int(c2 * e)  # Calculate hidden channels
         assert c_ % 32 == 0, "Hidden channels must be a multiple of 32."
@@ -635,21 +490,6 @@ class HPST(nn.Module):
             self.add_module(f"attnlayer_{i}", layer)
 
     def forward(self, x):
-        """
-        Forward pass through the HPST module.
-
-        Processes the input feature and upper-level feature through initial convolutions,
-        applies stacked PSAttnBlock modules for feature fusion, and concatenates the outputs
-        before a final convolution to produce the output tensor.
-
-        Args:
-            x (tuple): Tuple containing two tensors:
-                - x[0] (torch.Tensor): Input feature map; shape [B, c1, H, W].
-                - x[1] (torch.Tensor): Upper-level feature map; shape [B, c_up, H/2, W/2].
-
-        Returns:
-            torch.Tensor: Output feature map after processing; shape [B, c2, H, W].
-        """
         # Extract input and upper-level features from tuple
         upper_feat = x[1]
         x = self.cv1(x[0])
@@ -676,4 +516,4 @@ class HPST(nn.Module):
 
 
 
-######################################## PyramidSparseTransformer end ########################################
+######################################## HPST end ########################################
