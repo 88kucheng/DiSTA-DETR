@@ -1,9 +1,9 @@
 # Enhanced Infrared Small-Object Detection in UAV Imagery: DiSTA-DETR with Dilated-Sparse Thermal Attention
 
-The overall network architecture of the model is specified in model/DiSTA-DETR.yaml. 
-The implementation details of the three core modules—EDTA, EGCA, and HSE—can be found in the following files:
-ultralytics/nn/extra_modules/edta.py
-ultralytics/nn/extra_modules/block.py
+- The overall network architecture of the model is specified in model/DiSTA-DETR.yaml. 
+- The implementation details of the three core modules—EDTA, EGCA, and HSE—can be found in the following files:
+ - ultralytics/nn/extra_modules/edta.py
+ - ultralytics/nn/extra_modules/block.py
 
 ## Datasets
 This project uses the HIT-UAV and SIRST-V2 datasets for experiments, both of which are publicly available.
