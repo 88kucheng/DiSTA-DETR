@@ -211,7 +211,7 @@ class GateFeedForward(nn.Module):
         hidden_dim = int(dim * ffn_expansion_factor)
 
         self.project_in = nn.Conv2d(dim, hidden_dim, kernel_size=3, padding=1, dilation=1, bias=bias)
-        self.gate = nn.Conv2d(dim, hidden_dim, kernel_size=1)  # 门控分支
+        self.gate = nn.Conv2d(dim, hidden_dim, kernel_size=1)
         self.act = nn.GELU()
         self.project_out = nn.Conv2d(hidden_dim, dim, kernel_size=3, padding=1, dilation=1, bias=bias)
 
